@@ -19,25 +19,23 @@ type quote struct {
 }
 
 type queries struct {
-	Qall string `json:"qtall"`
-	Qid string `json:"qt.id"`
-	Qnew string `json:"qtnew"`
-	Qchg string `json:"qtchange"`
-	Qdel string `json:"qtdelete"`
+	Qall string `json:"ALL"`
+	Qcp string `json:"CHERRYPICK"`
+	Qnew string `json:"SUBMIT"`
+	Qchg string `json:"CHANGE"`
+	Qdel string `json:"REMOVE"`
 }
 
 func main() {
 	// gin.SetMode(gin.ReleaseMode);
-
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Could not load .env file: %v", err)
+	if err := godotenv.Load(); err != nil {
+		log.Fatalf("Could not load .env file: %v", err)
 		return
 	}
 
 	dburl := os.Getenv("DB_URL")
 	if dburl == "" {
-		log.Fatal(".env file missing DB_URL")
+		log.Fatalf(".env file missing DB_URL")
 		return
 	}
 
@@ -48,8 +46,7 @@ func main() {
 	}
 
 	var dbQueries queries 
-	err = json.Unmarshal(file, &dbQueries)
-	if err != nil {
+	if err := json.Unmarshal(file, &dbQueries); err != nil {
 		log.Fatalf("Could not parse dbqueries.json")
 		return
 	}
@@ -65,18 +62,20 @@ func main() {
 
 	router := gin.Default();
 
-	router.GET("/qtall", func(c *gin.Context) {
+	router.GET("/qt", func(c *gin.Context) {
 		// c.IndentedJSON(http.StatusOK, quotes)
 		// c.JSON(http.StatusOK, quotes)
 		qrows, err := dbconn.Query(dbctx, dbQueries.Qall)
 		if err != nil {
 			qrows.Close()
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Println("[Error ALPHA] ", err.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
-		if err = qrows.Err(); err != nil {
+		if err := qrows.Err(); err != nil {
 			qrows.Close()
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Println("[Error BETA] ", err.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
 		defer qrows.Close()
@@ -88,7 +87,8 @@ func main() {
 			
 			err = qrows.Scan(&q.ID, &q.Author, &q.Text)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				log.Println("[Error GAMMA] ", err.Error())
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 				return
 			}
 			
@@ -102,57 +102,63 @@ func main() {
 
 		var q quote
 
-		err = dbconn.QueryRow(dbctx, dbQueries.Qid, idparam).Scan(&q.ID, &q.Author, &q.Text)
+		err = dbconn.QueryRow(dbctx, dbQueries.Qcp, idparam).Scan(&q.ID, &q.Author, &q.Text)
 		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			log.Println("[Error DELTA] ", err.Error())
+			c.JSON(http.StatusNotFound, gin.H{"error": "could not find item specified"})
 			return
 		}
 
 		c.JSON(http.StatusOK, q)		
 	})
-	router.POST("/qtnew", func(c *gin.Context){
+	router.POST("/qt", func(c *gin.Context){
 		var quoteparam quote
 
 		if err := c.BindJSON(&quoteparam); err != nil {
 			// received invalid json data
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			log.Println("[Error EPSILON] ", err.Error())
+			c.JSON(http.StatusBadRequest, gin.H{"error": "data format error"})
 			return
 		}
 
-		_, err := dbconn.Exec(dbctx, dbQueries.Qnew, quoteparam.Author, quoteparam.Text)
+		err := dbconn.QueryRow(dbctx, dbQueries.Qnew, quoteparam.Author, quoteparam.Text).Scan(&quoteparam.ID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Println("[Error ZETA] ", err.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
 
 		c.JSON(http.StatusCreated, quoteparam)
 	})
-	router.PUT("/qtchange", func(c *gin.Context){
+	router.PUT("/qt/:id", func(c *gin.Context){
 		// this needs to check which feels are provided and only update them. BindJSON will leave non-provided empty
 
 		var q quote
 		if err := c.BindJSON(&q); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			log.Println("[Error ETA] ", err.Error())
+			c.JSON(http.StatusBadRequest, gin.H{"error": "data format error"})
 			return
 		}
 
-		id := c.Param("id")
-		_, err := dbconn.Exec(dbctx, dbQueries.Qchg, q.Author, q.Text, q.ID)
+		idparam := c.Param("id")
+		_, err := dbconn.Exec(dbctx, dbQueries.Qchg, q.Author, q.Text, idparam)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Println("[Error THETA] ", err.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
 
-		q.ID = id
+		q.ID = idparam
 
 		c.JSON(http.StatusOK, q)
 	})
-	router.DELETE("/qtdelete/:id", func(c *gin.Context){
+	router.DELETE("/qt/:id", func(c *gin.Context){
 		id := c.Param("id")
 
 		_, err := dbconn.Exec(dbctx, dbQueries.Qdel, id)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Println("[Error IOTA] ", err.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal sever error"})
 			return
 		}
 
