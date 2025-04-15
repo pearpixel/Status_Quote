@@ -7,6 +7,8 @@ import (
 	"os"
 	"encoding/json"
 	"database/sql"
+	"fmt"
+	"bytes"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
@@ -19,6 +21,7 @@ type quote struct {
 	Author string `json:"author"`
 	Text string `json:"text"`
 	Category string `json:"category"`
+	Pbytes string `json:"image"`
 }
 
 type queries struct {
@@ -81,6 +84,7 @@ func main() {
 		qrows, err := dbconn.Query(dbctx, dbQueries.Qall)
 		if err != nil {
 			qrows.Close()
+
 			log.Println("[Error ALPHA] ", err.Error())
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
@@ -107,6 +111,22 @@ func main() {
 			
 			marshal_null(&ns, &q)
 
+			str := fmt.Sprintf("./pictures/%s.file", q.ID);
+
+			_, err := os.Stat(str);
+			if err != nil {
+				log.Println("[Error LAMBDA] ", err.Error())
+				q.Pbytes = ""
+			} else {
+				data, err := os.ReadFile(str)
+				if err != nil {
+					log.Println("[Error MU] ", err.Error())
+					q.Pbytes = ""
+				} else {
+					q.Pbytes = string(bytes.TrimRight(data, "\n"))
+				}
+			}
+
 			qQuotes = append(qQuotes, q)
 		}
 
@@ -128,6 +148,22 @@ func main() {
 		}
 
 		marshal_null(&ns, &q)
+		
+		str := fmt.Sprintf("./pictures/%s.file", q.ID);
+
+		_, err := os.Stat(str);
+		if err != nil {
+			log.Println("[Error LAMBDA] ", err.Error())
+			q.Pbytes = ""
+		} else {
+			data, err := os.ReadFile(str)
+			if err != nil {
+				log.Println("[Error MU] ", err.Error())
+				q.Pbytes = ""
+			} else {
+				q.Pbytes = string(bytes.TrimRight(data, "\n"))
+			}
+		}
 
 		c.JSON(http.StatusOK, q)		
 	})
@@ -143,6 +179,23 @@ func main() {
 		}
 
 		marshal_null(&ns, &q)
+
+		
+			str := fmt.Sprintf("./pictures/%s.file", q.ID);
+
+			_, err := os.Stat(str);
+			if err != nil {
+				log.Println("[Error LAMBDA] ", err.Error())
+				q.Pbytes = ""
+			} else {
+				data, err := os.ReadFile(str)
+				if err != nil {
+					log.Println("[Error MU] ", err.Error())
+					q.Pbytes = ""
+				} else {
+					q.Pbytes = string(bytes.TrimRight(data, "\n"))
+				}
+			}
 
 		c.JSON(http.StatusOK, q)
 	})
