@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"database/sql"
 	"fmt"
-	"bytes"
+	//"bytes"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
@@ -39,6 +39,10 @@ func marshal_null(ns *sql.NullString, q *quote) {
 	} else {
 		q.Category = ""
 	}
+}
+
+func get_path(id string) string {
+	return fmt.Sprintf("/pictures/%s.file", id)
 }
 
 
@@ -111,21 +115,24 @@ func main() {
 			
 			marshal_null(&ns, &q)
 
-			str := fmt.Sprintf("./pictures/%s.file", q.ID);
+			//str := fmt.Sprintf("./pictures/%s.file", q.ID);
+			//q.Pbytes = str;
+			str := get_path(q.ID);
+			q.Pbytes = str;
 
-			_, err := os.Stat(str);
-			if err != nil {
-				log.Println("[Error LAMBDA] ", err.Error())
-				q.Pbytes = ""
-			} else {
-				data, err := os.ReadFile(str)
-				if err != nil {
-					log.Println("[Error MU] ", err.Error())
-					q.Pbytes = ""
-				} else {
-					q.Pbytes = string(bytes.TrimRight(data, "\n"))
-				}
-			}
+			//_, err := os.Stat(str);
+			//if err != nil {
+			//	log.Println("[Error LAMBDA] ", err.Error())
+			//	q.Pbytes = ""
+			//} else {
+			//	data, err := os.ReadFile(str)
+			//	if err != nil {
+			//		log.Println("[Error MU] ", err.Error())
+			//		q.Pbytes = ""
+			//	} else {
+			//		q.Pbytes = string(bytes.TrimRight(data, "\n"))
+			//	}
+			//}
 
 			qQuotes = append(qQuotes, q)
 		}
@@ -149,21 +156,24 @@ func main() {
 
 		marshal_null(&ns, &q)
 		
-		str := fmt.Sprintf("./pictures/%s.file", q.ID);
+		//str := fmt.Sprintf("./pictures/%s.file", q.ID);
+		//q.Pbytes = str;
+		str := get_path(q.ID);
+		q.Pbytes = str;
 
-		_, err := os.Stat(str);
-		if err != nil {
-			log.Println("[Error LAMBDA] ", err.Error())
-			q.Pbytes = ""
-		} else {
-			data, err := os.ReadFile(str)
-			if err != nil {
-				log.Println("[Error MU] ", err.Error())
-				q.Pbytes = ""
-			} else {
-				q.Pbytes = string(bytes.TrimRight(data, "\n"))
-			}
-		}
+		//_, err := os.Stat(str);
+		//if err != nil {
+		//	log.Println("[Error LAMBDA] ", err.Error())
+		//	q.Pbytes = ""
+		//} else {
+		//	data, err := os.ReadFile(str)
+		//	if err != nil {
+		//		log.Println("[Error MU] ", err.Error())
+		//		q.Pbytes = ""
+		//	} else {
+		//		q.Pbytes = string(bytes.TrimRight(data, "\n"))
+		//	}
+		//}
 
 		c.JSON(http.StatusOK, q)		
 	})
@@ -181,21 +191,25 @@ func main() {
 		marshal_null(&ns, &q)
 
 		
-			str := fmt.Sprintf("./pictures/%s.file", q.ID);
+			//str := fmt.Sprintf("./pictures/%s.file", q.ID);
+			//q.Pbytes = str;
+		
+		str := get_path(q.ID);
+		q.Pbytes = str;
 
-			_, err := os.Stat(str);
-			if err != nil {
-				log.Println("[Error LAMBDA] ", err.Error())
-				q.Pbytes = ""
-			} else {
-				data, err := os.ReadFile(str)
-				if err != nil {
-					log.Println("[Error MU] ", err.Error())
-					q.Pbytes = ""
-				} else {
-					q.Pbytes = string(bytes.TrimRight(data, "\n"))
-				}
-			}
+			//_, err := os.Stat(str);
+			//if err != nil {
+			//	log.Println("[Error LAMBDA] ", err.Error())
+			//	q.Pbytes = ""
+			//} else {
+			//	data, err := os.ReadFile(str)
+			//	if err != nil {
+			//		log.Println("[Error MU] ", err.Error())
+			//		q.Pbytes = ""
+			//	} else {
+			//		q.Pbytes = string(bytes.TrimRight(data, "\n"))
+			//	}
+			//}
 
 		c.JSON(http.StatusOK, q)
 	})
@@ -253,5 +267,11 @@ func main() {
 		c.Status(http.StatusNoContent)
 	})
 
+
+	http.Handle("/pictures/", http.StripPrefix("/pictures/", http.FileServer(http.Dir("pictures"))))
+
+	go func() { 
+		http.ListenAndServe("localhost:8081", nil)
+	}()
 	router.Run("localhost:8080")
 }
