@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"database/sql"
 	"fmt"
+	"strings"
+	"strconv"
 	//"bytes"
 
 	"github.com/gin-gonic/gin"
@@ -15,66 +17,133 @@ import (
 	"github.com/joho/godotenv"
 )
 
-
 type quote struct {
 	ID string `json:"id"`
 	Author string `json:"author"`
 	Text string `json:"text"`
 	Category string `json:"category"`
-	Pbytes string `json:"image"`
+	Imagename string `json:"image"`
 }
 
 type queries struct {
-	Qall string `json:"ALL"`
-	Qcp string `json:"CHERRYPICK"`
-	Qrd string `json:"RAND"`
-	Qnew string `json:"SUBMIT"`
-	Qchg string `json:"CHANGE"`
-	Qdel string `json:"REMOVE"`
+	All string `json:"ALL"`
+	Cherryp string `json:"CHERRYPICK"`
+	Rand string `json:"RAND"`
+	New string `json:"SUBMIT"`
+	Change string `json:"CHANGE"`
+	Delete string `json:"REMOVE"`
 }
 
-func marshal_null(ns *sql.NullString, q *quote) {
+func marshal_nullstring(ns *sql.NullString, dest *string) {	
 	if ns.Valid {
-		q.Category = ns.String
+		*dest = ns.String
 	} else {
-		q.Category = ""
+		*dest = ""
 	}
 }
 
-func get_path(id string) string {
-	return fmt.Sprintf("/pictures/%s.file", id)
+func read_quote_from_rows(rows pgx.Rows) (quote, error) {
+	var qt quote
+	var nsImagename sql.NullString
+	var nsCategory sql.NullString
+
+	err := rows.Scan(&qt.ID, &qt.Author, &qt.Text, &nsImagename, &nsCategory)
+
+	if err != nil {
+		return qt, err
+	}
+
+	marshal_nullstring(&nsCategory, &qt.Category)
+	marshal_nullstring(&nsImagename, &qt.Imagename)
+
+	if strings.TrimSpace(qt.Imagename) == "" { // if it doesn't have a file assigned, give it the category's fallback one IF that exists
+		if strings.TrimSpace(qt.Category) != "" {
+			qt.Imagename = fmt.Sprintf("fb_%s", &qt.Category)
+		} else { 
+			return qt, nil
+		}
+	}	
+
+	pathString := get_path(qt.Imagename)
+	qt.Imagename = pathString
+
+	return qt, nil
 }
 
+func read_quote_from_row(row pgx.Row) (quote, error) {
+	var qt quote
+	var nsImagename sql.NullString
+	var nsCategory sql.NullString
+
+	err := row.Scan(&qt.ID, &qt.Author, &qt.Text, &nsImagename, &nsCategory)
+
+	if err != nil {
+		return qt, err
+	}
+
+	marshal_nullstring(&nsCategory, &qt.Category)
+	marshal_nullstring(&nsImagename, &qt.Imagename)
+
+	if strings.TrimSpace(qt.Imagename) == "" { // if it doesn't have a file assigned, give it the category's fallback one IF that exists
+		if strings.TrimSpace(qt.Category) != "" {
+			qt.Imagename = fmt.Sprintf("fb_%s", &qt.Category)
+		} else { 
+			return qt, nil
+		}
+	}	
+
+	pathString := get_path(qt.Imagename)
+	qt.Imagename = pathString
+
+	return qt, nil
+}
+
+func get_path(name string) string {
+	return fmt.Sprintf("/pictures/%s.file", name)
+}
+
+func print(format string, args ...interface{}) {
+	log.Println(fmt.Sprintf(format, args...))
+}
+
+func fatal_log(format string, args ...interface{}) {
+	log.Fatalf(fmt.Sprintf(format, args...))
+}
+
+func internal_error(c *gin.Context) {
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+}
 
 func main() {
-	// gin.SetMode(gin.ReleaseMode);
+	gin.SetMode(gin.ReleaseMode);
+	
 	if err := godotenv.Load(); err != nil {
-		log.Fatalf("Could not load .env file: %v", err)
+		fatal_log("Could not load .env file. [Error:] %v", err)
 		return
 	}
 
 	dburl := os.Getenv("DB_URL")
 	if dburl == "" {
-		log.Fatalf(".env file missing DB_URL")
+		fatal_log(".env file missing DB_URL")
 		return
 	}
 
 	file, err := os.ReadFile("dbqueries.json")
 	if err != nil {
-		log.Fatalf("Could not load dbqueries.json")
+		fatal_log("Could not load dbqueries.json. [Error:] %v", err)
 		return
 	}
 
 	var dbQueries queries 
 	if err := json.Unmarshal(file, &dbQueries); err != nil {
-		log.Fatalf("Could not parse dbqueries.json")
+		fatal_log("Could not parse dbqueries.json. [Error:] %v", err)
 		return
 	}
 
 	dbctx := context.Background()
 	dbconn, err := pgx.Connect(dbctx, dburl)
 	if err != nil {
-		log.Fatalf("database connection failed: %v", err)
+		fatal_log("Database connection failed, [Error:] %v", err)
 		dbconn.Close(dbctx)
 		return
 	}
@@ -83,195 +152,210 @@ func main() {
 	router := gin.Default();
 
 	router.GET("/qt", func(c *gin.Context) {
-		// c.IndentedJSON(http.StatusOK, quotes)
-		// c.JSON(http.StatusOK, quotes)
-		qrows, err := dbconn.Query(dbctx, dbQueries.Qall)
-		if err != nil {
-			qrows.Close()
-
-			log.Println("[Error ALPHA] ", err.Error())
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-			return
-		}
-		if err := qrows.Err(); err != nil {
-			qrows.Close()
-			log.Println("[Error BETA] ", err.Error())
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-			return
-		}
-		defer qrows.Close()
-
-		var qQuotes []quote
-
-		for qrows.Next() {
-			var q quote
-			var ns sql.NullString
-			
-			err = qrows.Scan(&q.ID, &q.Author, &q.Text, &ns)
-			if err != nil {
-				log.Println("[Error GAMMA] ", err.Error())
-				continue
-			}
-			
-			marshal_null(&ns, &q)
-
-			//str := fmt.Sprintf("./pictures/%s.file", q.ID);
-			//q.Pbytes = str;
-			str := get_path(q.ID);
-			q.Pbytes = str;
-
-			//_, err := os.Stat(str);
-			//if err != nil {
-			//	log.Println("[Error LAMBDA] ", err.Error())
-			//	q.Pbytes = ""
-			//} else {
-			//	data, err := os.ReadFile(str)
-			//	if err != nil {
-			//		log.Println("[Error MU] ", err.Error())
-			//		q.Pbytes = ""
-			//	} else {
-			//		q.Pbytes = string(bytes.TrimRight(data, "\n"))
-			//	}
-			//}
-
-			qQuotes = append(qQuotes, q)
-		}
-
-		// jsonData, err := json.MarshalIndent(qQuotes, "", "  ")
-
-		c.JSON(http.StatusOK, qQuotes)
+		all_queries(c, dbconn, dbctx, &dbQueries)
 	})
+
 	router.GET("/qt/:id", func(c *gin.Context) {
-		idparam := c.Param("id");
+		idparam, err := strconv.Atoi(c.Param("id"))
 
-		var q quote
-		var ns sql.NullString
-
-		err = dbconn.QueryRow(dbctx, dbQueries.Qcp, idparam).Scan(&q.ID, &q.Author, &q.Text, &ns)
 		if err != nil {
-			log.Println("[Error DELTA] ", err.Error())
-			c.JSON(http.StatusNotFound, gin.H{"error": "could not find item specified"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quote id"})
 			return
 		}
 
-		marshal_null(&ns, &q)
-		
-		//str := fmt.Sprintf("./pictures/%s.file", q.ID);
-		//q.Pbytes = str;
-		str := get_path(q.ID);
-		q.Pbytes = str;
-
-		//_, err := os.Stat(str);
-		//if err != nil {
-		//	log.Println("[Error LAMBDA] ", err.Error())
-		//	q.Pbytes = ""
-		//} else {
-		//	data, err := os.ReadFile(str)
-		//	if err != nil {
-		//		log.Println("[Error MU] ", err.Error())
-		//		q.Pbytes = ""
-		//	} else {
-		//		q.Pbytes = string(bytes.TrimRight(data, "\n"))
-		//	}
-		//}
-
-		c.JSON(http.StatusOK, q)		
-	})
-	router.GET("/qt/rand", func(c *gin.Context){
-		var q quote
-		var ns sql.NullString
-
-		err = dbconn.QueryRow(dbctx, dbQueries.Qrd).Scan(&q.ID, &q.Author, &q.Text, &ns)
-		if err != nil {
-			log.Println("[Error KAPPA] ", err.Error())
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-			return
-		}
-
-		marshal_null(&ns, &q)
-
-		
-			//str := fmt.Sprintf("./pictures/%s.file", q.ID);
-			//q.Pbytes = str;
-		
-		str := get_path(q.ID);
-		q.Pbytes = str;
-
-			//_, err := os.Stat(str);
-			//if err != nil {
-			//	log.Println("[Error LAMBDA] ", err.Error())
-			//	q.Pbytes = ""
-			//} else {
-			//	data, err := os.ReadFile(str)
-			//	if err != nil {
-			//		log.Println("[Error MU] ", err.Error())
-			//		q.Pbytes = ""
-			//	} else {
-			//		q.Pbytes = string(bytes.TrimRight(data, "\n"))
-			//	}
-			//}
-
-		c.JSON(http.StatusOK, q)
-	})
-	router.POST("/qt", func(c *gin.Context){
-		var quoteparam quote
-
-		if err := c.BindJSON(&quoteparam); err != nil {
-			// received invalid json data
-			log.Println("[Error EPSILON] ", err.Error())
-			c.JSON(http.StatusBadRequest, gin.H{"error": "data format error"})
-			return
-		}
-		
-		err := dbconn.QueryRow(dbctx, dbQueries.Qnew, quoteparam.Author, quoteparam.Text, quoteparam.Category).Scan(&quoteparam.ID)
-		if err != nil {
-			log.Println("[Error ZETA] ", err.Error())
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-			return
-		}
-
-		c.JSON(http.StatusCreated, quoteparam)
-	})
-	router.PUT("/qt/:id", func(c *gin.Context){
-		// this needs to check which feels are provided and only update them. BindJSON will leave non-provided empty
-
-		var q quote
-		if err := c.BindJSON(&q); err != nil {
-			log.Println("[Error ETA] ", err.Error())
-			c.JSON(http.StatusBadRequest, gin.H{"error": "data format error"})
-			return
-		}
-
-		idparam := c.Param("id")
-		_, err := dbconn.Exec(dbctx, dbQueries.Qchg, q.Author, q.Text, q.Category, idparam)
-		if err != nil {
-			log.Println("[Error THETA] ", err.Error())
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-			return
-		}
-
-		q.ID = idparam
-
-		c.JSON(http.StatusOK, q)
-	})
-	router.DELETE("/qt/:id", func(c *gin.Context){
-		id := c.Param("id")
-
-		_, err := dbconn.Exec(dbctx, dbQueries.Qdel, id)
-		if err != nil {
-			log.Println("[Error IOTA] ", err.Error())
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal sever error"})
-			return
-		}
-
-		c.Status(http.StatusNoContent)
+		cherrypick_query(c, dbconn, dbctx, &dbQueries, idparam)
 	})
 
+	router.GET("/qt/rand", func(c *gin.Context) {
+		random_query(c, dbconn, dbctx, &dbQueries)
+	})
 
+	router.POST("/qt", func(c *gin.Context) {
+		post_query_http(c, dbconn, dbctx, &dbQueries)
+	})
+
+	router.PUT("/qt/:id", func(c *gin.Context) {
+		put_query_http(c, dbconn, dbctx, &dbQueries)
+	})
+
+	router.DELETE("/qt/:id", func(c *gin.Context){ 
+		idparam, err := strconv.Atoi(c.Param("id"))
+
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quote id"})
+			return
+		}
+
+		delete_query(c, dbconn, dbctx, &dbQueries, idparam)
+	})
+	
 	http.Handle("/pictures/", http.StripPrefix("/pictures/", http.FileServer(http.Dir("pictures"))))
-
 	go func() { 
-		http.ListenAndServe("localhost:8081", nil)
+		http.ListenAndServe("4001", nil)
 	}()
-	router.Run("localhost:8080")
+
+	router.Run(":4000")
+}
+
+
+func all_queries(ct *gin.Context, dbconn *pgx.Conn, dbctx context.Context, dbQueries *queries) {
+	rows, err := dbconn.Query(dbctx, dbQueries.All)
+	
+	if err != nil {
+		rows.Close()
+		print("[all_queries Error:] %v", err)
+		internal_error(ct)
+		return
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		print("[all_queries Error:] %v", err)
+		internal_error(ct)
+		return
+	}
+
+	defer rows.Close()
+
+	var quotes []quote
+	
+	for rows.Next() {
+		qt, err := read_quote_from_rows(rows)
+
+		if err != nil {
+			print("[all_queries Error:] %v", err)
+			continue
+		}
+
+		quotes = append(quotes, qt)
+	}
+
+	ct.JSON(http.StatusOK, quotes)
+}
+
+func cherrypick_query(ct *gin.Context, dbConn *pgx.Conn, dbctx context.Context, dbQueries *queries, id int) {
+	row := dbConn.QueryRow(dbctx, dbQueries.Cherryp, id)
+
+	qt, err := read_quote_from_row(row)
+
+	if err != nil { //@todo return http.StatusNotFound when no quote with id
+		print("[cherrypick_query Error:] %v", err)
+		internal_error(ct)
+		return
+	}
+
+	ct.JSON(http.StatusOK, qt)
+}
+
+func random_query(ct *gin.Context, dbConn *pgx.Conn, dbctx context.Context, dbQueries *queries) {
+	row := dbConn.QueryRow(dbctx, dbQueries.Rand)
+
+	qt, err := read_quote_from_row(row)
+
+	if err != nil {
+		print("[random_query Error:] %v", err)
+		internal_error(ct)
+		return
+	}
+
+	ct.JSON(http.StatusOK, qt)
+}
+
+func post_query_http(ct *gin.Context, dbConn *pgx.Conn, dbctx context.Context, dbQueries *queries) {
+	var qtParam quote
+
+	if err := ct.BindJSON(&qtParam); err != nil {
+		ct.JSON(http.StatusBadRequest, gin.H{"error": "data format error"})
+		return
+	}
+
+	var category int
+	if len(qtParam.Category) == 0 {
+		category = -1
+	}
+
+	if category != -1 {
+		categoryN, err := strconv.Atoi(qtParam.Category)
+
+		if err != nil {
+			ct.JSON(http.StatusBadRequest, gin.H{"error": "data format error: invalid category id"})
+			return
+		}
+
+		category = categoryN
+	}
+
+	var err error
+	if category == -1 {
+		err = dbConn.QueryRow(dbctx, dbQueries.New, qtParam.Author, qtParam.Text, nil, qtParam.Imagename).Scan(&qtParam.ID)
+	} else { 
+		err = dbConn.QueryRow(dbctx, dbQueries.New, qtParam.Author, qtParam.Text, category, qtParam.Imagename).Scan(&qtParam.ID)
+	}
+
+	if err != nil {
+		print("[post_query_http Error:] %v", err)
+		internal_error(ct)
+		return
+	}
+
+	ct.JSON(http.StatusCreated, qtParam)
+}
+
+func put_query_http(ct *gin.Context, dbConn *pgx.Conn, dbctx context.Context, dbQueries *queries) {
+	var qtParam quote
+
+	if err := ct.BindJSON(&qtParam); err != nil {
+		ct.JSON(http.StatusBadRequest, gin.H{"error": "data format error"})
+		return
+	}
+
+	idParam, err := strconv.Atoi(ct.Param("id"))
+
+	if err != nil {
+		ct.JSON(http.StatusBadRequest, gin.H{"error": "invalid quote id"})
+		return
+	}
+
+	var category int
+	if len(qtParam.Category) == 0 {
+		category = -1
+	}
+
+	if category != -1 {
+		categoryN, err := strconv.Atoi(qtParam.Category)
+
+		if err != nil {
+			ct.JSON(http.StatusBadRequest, gin.H{"error": "data format error: invalid category id"})
+			return
+		}
+
+		category = categoryN
+	}
+
+	if category == -1 {
+		_, err = dbConn.Exec(dbctx, dbQueries.Change, qtParam.Author, qtParam.Text, nil, qtParam.Imagename, idParam)
+	} else {
+		_, err = dbConn.Exec(dbctx, dbQueries.Change, qtParam.Author, qtParam.Text, category, qtParam.Imagename, idParam)
+	}
+
+	if err != nil {
+		print("[put_query_http Error:] %v", err)
+		internal_error(ct)
+		return
+	}
+
+	// qtParam.ID = idParam
+
+	ct.JSON(http.StatusOK, qtParam)
+}
+
+func delete_query(ct *gin.Context, dbConn *pgx.Conn, dbctx context.Context, dbQueries *queries, id int) {
+	_, err := dbConn.Exec(dbctx, dbQueries.Delete, id)
+
+	if err != nil {
+		print("[delete_query Error:] %v", err)
+		internal_error(ct)
+		return
+	}
+
+	ct.Status(http.StatusNoContent)
 }
