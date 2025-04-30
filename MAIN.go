@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"encoding/json"
 	"database/sql"
 	"fmt"
@@ -183,7 +184,7 @@ func get_path(name string) string {
 }
 
 func get_fbpath(name string) string {
-	return fmt.Sprintf("/pictures/fb_%s.file", name)
+	return fmt.Sprintf("pictures/fb_%s.file", name)
 }
 
 func print(format string, args ...interface{}) {
@@ -204,6 +205,25 @@ func timed_error(c *gin.Context) {
 
 func error_response(c *gin.Context, code int, s string) {
 	c.JSON(code, gin.H{"error": s})
+}
+
+func picture_handler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fsPath := filepath.Join("./pictures", r.URL.Path)
+
+		info, err := os.Stat(fsPath)
+		if err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if info.IsDir() {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func main() {
@@ -303,13 +323,16 @@ func main() {
 	router.DELETE("/cat/:id", func(c *gin.Context){
 		dispatch_request(c, dbpool, &quoteQueries, &catQueries, DELETE_CAT)
 	})
+
+	fs := http.FileServer(http.Dir("./pictures"))
+	phandler := picture_handler(fs)
 	
-	http.Handle("/pictures/", http.StripPrefix("/pictures/", http.FileServer(http.Dir("pictures"))))
+	http.Handle("/pictures/", http.StripPrefix("/pictures/", /*http.FileServer(http.Dir("pictures"))*/ phandler))
 	go func() { 
-		http.ListenAndServe("localhost:8081", nil)
+		http.ListenAndServe(":8081", nil)
 	}()
 
-	router.Run("localhost:8080")
+	router.Run(":8080")
 }
 
 func dispatch_request(c *gin.Context, dbpool *pgxpool.Pool, quoteQueries *quote_queries_t, catQueries *cat_queries_t, requestType reqtype_e) {
